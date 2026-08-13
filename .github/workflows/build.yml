@@ -1,0 +1,47 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: warpview-windows-x86_64
+            bin_path: target/release/warpview.exe
+          - os: macos-latest
+            artifact_name: warpview-macos-x86_64
+            bin_path: target/release/warpview
+          - os: ubuntu-latest
+            artifact_name: warpview-linux-x86_64
+            bin_path: target/release/warpview
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y cmake pkg-config nasm
+
+      - name: Install build tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake pkg-config nasm
+
+      - name: Install build tools (Windows)
+        if: runner.os == 'Windows'
+        run: choco install cmake nasm pkgconfiglite -y
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.bin_path }}
