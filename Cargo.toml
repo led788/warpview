@@ -1,0 +1,22 @@
+[package]
+name = "warpview"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+bytemuck = "1.25.2"
+directories = "6.0.0"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "rayon"] }
+kamadak-exif = "0.6.1"
+libheif-rs = { version = "2.7.0", features = ["embedded-libheif"] }
+pollster = "1.0.1"
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.4"
+wgpu = "30.0.0"
+winit = "0.30.13"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
