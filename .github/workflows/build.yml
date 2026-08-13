@@ -21,6 +21,14 @@ jobs:
             artifact_name: warpview-linux-x86_64
             bin_path: target/release/warpview
     runs-on: ${{ matrix.os }}
+    env:
+      # On Windows+MSVC, libheif-sys ignores the "embedded-libheif" cmake
+      # build entirely and always looks up libheif via vcpkg instead.
+      # x64-windows-static-md statically links libheif (and its codec
+      # deps) into the exe while still using the dynamic MSVC CRT that
+      # Rust links by default, so no RUSTFLAGS/crt-static juggling needed.
+      VCPKG_ROOT: C:\vcpkg
+      VCPKGRS_TRIPLET: x64-windows-static-md
     steps:
       - uses: actions/checkout@v4
 
@@ -32,9 +40,9 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install cmake pkg-config nasm
 
-      - name: Install build tools (Windows)
+      - name: Install libheif via vcpkg (Windows)
         if: runner.os == 'Windows'
-        run: choco install cmake nasm pkgconfiglite -y
+        run: vcpkg install libheif:x64-windows-static-md
 
       - uses: dtolnay/rust-toolchain@stable
 
