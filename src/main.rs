@@ -1,3 +1,7 @@
+// Suppress the console window Windows otherwise opens alongside a GUI app,
+// but only in release builds, so eprintln! diagnostics stay visible in dev.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod app;
 mod config;
 mod decode;

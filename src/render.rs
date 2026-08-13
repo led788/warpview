@@ -6,6 +6,7 @@ use crate::decode::DecodedImage;
 const SHADER_SRC: &str = include_str!("shader.wgsl");
 
 struct CurrentTexture {
+    texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
     width: u32,
     height: u32,
@@ -202,7 +203,7 @@ impl Renderer {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &decoded.rgba,
+            &decoded.frames[0].rgba,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4 * decoded.width),
@@ -230,11 +231,38 @@ impl Renderer {
             ],
         });
         self.current = Some(CurrentTexture {
+            texture,
             bind_group,
             width: decoded.width,
             height: decoded.height,
         });
         self.update_transform();
+    }
+
+    /// Overwrite the current image's texture with another frame of the same
+    /// dimensions, without recreating the texture or bind group. Used to
+    /// step through animated GIF/APNG frames cheaply.
+    pub fn update_frame_pixels(&mut self, rgba: &[u8]) {
+        let Some(current) = &self.current else { return };
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &current.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            rgba,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * current.width),
+                rows_per_image: Some(current.height),
+            },
+            wgpu::Extent3d {
+                width: current.width,
+                height: current.height,
+                depth_or_array_layers: 1,
+            },
+        );
     }
 
     /// Recompute the letterbox scale so the current image fits the window

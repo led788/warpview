@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 const SUPPORTED_EXTENSIONS: &[&str] =
-    &["jpg", "jpeg", "png", "webp", "gif", "heic", "heif"];
+    &["jpg", "jpeg", "png", "apng", "webp", "gif", "heic", "heif"];
 
 pub fn is_supported(path: &Path) -> bool {
     path.extension()
@@ -128,6 +128,7 @@ mod tests {
     fn is_supported_matches_case_insensitively() {
         assert!(is_supported(Path::new("photo.HEIC")));
         assert!(is_supported(Path::new("photo.WebP")));
+        assert!(is_supported(Path::new("anim.APNG")));
         assert!(!is_supported(Path::new("photo.txt")));
     }
 

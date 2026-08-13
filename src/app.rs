@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
@@ -28,6 +29,8 @@ pub struct App {
     cache: HashMap<usize, DecodedImage>,
     cache_order: VecDeque<usize>,
     pending: HashSet<usize>,
+    frame_index: usize,
+    next_frame_at: Option<Instant>,
 }
 
 impl App {
@@ -41,6 +44,8 @@ impl App {
             cache: HashMap::new(),
             cache_order: VecDeque::new(),
             pending: HashSet::new(),
+            frame_index: 0,
+            next_frame_at: None,
         }
     }
 
@@ -55,6 +60,37 @@ impl App {
             window.request_redraw();
         }
         self.update_title();
+
+        self.frame_index = 0;
+        self.next_frame_at = if img.is_animated() {
+            Some(Instant::now() + img.frames[0].delay)
+        } else {
+            None
+        };
+    }
+
+    /// Advance to the next frame of the currently displayed animated
+    /// image (GIF/APNG) and schedule the following one.
+    fn advance_frame(&mut self) {
+        let Some(listing) = &self.listing else { return };
+        let idx = listing.current_index;
+        let Some(img) = self.cache.get(&idx) else {
+            self.next_frame_at = None;
+            return;
+        };
+        if !img.is_animated() {
+            self.next_frame_at = None;
+            return;
+        }
+        self.frame_index = (self.frame_index + 1) % img.frames.len();
+        let frame = &img.frames[self.frame_index];
+        if let Some(renderer) = &mut self.renderer {
+            renderer.update_frame_pixels(&frame.rgba);
+        }
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
+        self.next_frame_at = Some(Instant::now() + frame.delay);
     }
 
     fn update_title(&self) {
@@ -170,6 +206,15 @@ fn default_size(event_loop: &ActiveEventLoop) -> (u32, u32) {
     }
 }
 
+/// Taskbar/alt-tab window icon on Windows and Linux (macOS ignores
+/// per-window icons and uses the app bundle icon instead).
+fn load_window_icon() -> Option<winit::window::Icon> {
+    const ICON_BYTES: &[u8] = include_bytes!("../assets/icon_256.png");
+    let img = image::load_from_memory(ICON_BYTES).ok()?.into_rgba8();
+    let (width, height) = img.dimensions();
+    winit::window::Icon::from_rgba(img.into_raw(), width, height).ok()
+}
+
 impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
@@ -192,7 +237,8 @@ impl ApplicationHandler<UserEvent> for App {
 
         let mut attrs = Window::default_attributes()
             .with_title("WarpView")
-            .with_inner_size(winit::dpi::PhysicalSize::new(width, height));
+            .with_inner_size(winit::dpi::PhysicalSize::new(width, height))
+            .with_window_icon(load_window_icon());
         if let Some(position) = position {
             attrs = attrs.with_position(position);
         }
@@ -269,6 +315,18 @@ impl ApplicationHandler<UserEvent> for App {
             }
             _ => {}
         }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(at) = self.next_frame_at {
+            if Instant::now() >= at {
+                self.advance_frame();
+            }
+        }
+        event_loop.set_control_flow(match self.next_frame_at {
+            Some(at) => ControlFlow::WaitUntil(at),
+            None => ControlFlow::Wait,
+        });
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {

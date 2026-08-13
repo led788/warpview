@@ -1,12 +1,31 @@
 use anyhow::{Context, Result};
-use image::DynamicImage;
+use image::{AnimationDecoder, DynamicImage, ImageDecoder};
+use std::io::BufReader;
 use std::path::Path;
+use std::time::Duration;
+
+/// Delays below this are treated as authoring mistakes (many GIF encoders
+/// emit 0ms) and bumped up, matching common browser/viewer behavior.
+const MIN_FRAME_DELAY: Duration = Duration::from_millis(20);
+const DEFAULT_FRAME_DELAY: Duration = Duration::from_millis(100);
+
+pub struct DecodedFrame {
+    /// Tightly packed RGBA8 pixels, row-major.
+    pub rgba: Vec<u8>,
+    pub delay: Duration,
+}
 
 pub struct DecodedImage {
     pub width: u32,
     pub height: u32,
-    /// Tightly packed RGBA8 pixels, row-major.
-    pub rgba: Vec<u8>,
+    /// Always has at least one frame. More than one means animated.
+    pub frames: Vec<DecodedFrame>,
+}
+
+impl DecodedImage {
+    pub fn is_animated(&self) -> bool {
+        self.frames.len() > 1
+    }
 }
 
 pub fn decode(path: &Path) -> Result<DecodedImage> {
@@ -18,11 +37,13 @@ pub fn decode(path: &Path) -> Result<DecodedImage> {
 
     match ext.as_str() {
         "heic" | "heif" => decode_heif(path),
-        _ => decode_with_image_crate(path),
+        "gif" => decode_gif(path),
+        "png" | "apng" => decode_png(path),
+        _ => decode_static_with_image_crate(path),
     }
 }
 
-fn decode_with_image_crate(path: &Path) -> Result<DecodedImage> {
+fn decode_static_with_image_crate(path: &Path) -> Result<DecodedImage> {
     let img = image::open(path).with_context(|| format!("failed to decode {}", path.display()))?;
     let img = apply_exif_orientation(img, path);
     let rgba = img.to_rgba8();
@@ -30,8 +51,70 @@ fn decode_with_image_crate(path: &Path) -> Result<DecodedImage> {
     Ok(DecodedImage {
         width,
         height,
-        rgba: rgba.into_raw(),
+        frames: vec![DecodedFrame {
+            rgba: rgba.into_raw(),
+            delay: Duration::ZERO,
+        }],
     })
+}
+
+fn decode_gif(path: &Path) -> Result<DecodedImage> {
+    let file = std::fs::File::open(path)
+        .with_context(|| format!("failed to open {}", path.display()))?;
+    let decoder = image::codecs::gif::GifDecoder::new(BufReader::new(file))
+        .with_context(|| format!("failed to decode {}", path.display()))?;
+    let (width, height) = decoder.dimensions();
+    let frames = collect_frames(decoder.into_frames())
+        .with_context(|| format!("failed to decode {}", path.display()))?;
+    Ok(DecodedImage {
+        width,
+        height,
+        frames,
+    })
+}
+
+fn decode_png(path: &Path) -> Result<DecodedImage> {
+    let file = std::fs::File::open(path)
+        .with_context(|| format!("failed to open {}", path.display()))?;
+    let decoder = image::codecs::png::PngDecoder::new(BufReader::new(file))
+        .with_context(|| format!("failed to decode {}", path.display()))?;
+
+    if !decoder.is_apng()? {
+        return decode_static_with_image_crate(path);
+    }
+
+    let (width, height) = decoder.dimensions();
+    let apng = decoder.apng()?;
+    let frames = collect_frames(apng.into_frames())
+        .with_context(|| format!("failed to decode {}", path.display()))?;
+    Ok(DecodedImage {
+        width,
+        height,
+        frames,
+    })
+}
+
+fn collect_frames(frames: image::Frames) -> Result<Vec<DecodedFrame>> {
+    let mut out = Vec::new();
+    for frame in frames {
+        let frame = frame?;
+        let delay = clamp_delay(frame.delay().into());
+        let buffer = frame.into_buffer();
+        out.push(DecodedFrame {
+            rgba: buffer.into_raw(),
+            delay,
+        });
+    }
+    anyhow::ensure!(!out.is_empty(), "no frames decoded");
+    Ok(out)
+}
+
+fn clamp_delay(delay: Duration) -> Duration {
+    if delay < MIN_FRAME_DELAY {
+        DEFAULT_FRAME_DELAY
+    } else {
+        delay
+    }
 }
 
 fn apply_exif_orientation(img: DynamicImage, path: &Path) -> DynamicImage {
@@ -91,6 +174,9 @@ fn decode_heif(path: &Path) -> Result<DecodedImage> {
     Ok(DecodedImage {
         width,
         height,
-        rgba,
+        frames: vec![DecodedFrame {
+            rgba,
+            delay: Duration::ZERO,
+        }],
     })
 }
